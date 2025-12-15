@@ -226,6 +226,22 @@ public class OAuth2IdentityProviderConfig extends IdentityProviderModel {
         return getConfig().getOrDefault("emailClaim", IDToken.EMAIL);
     }
 
+    public Boolean isParEnabled() {
+        return Boolean.parseBoolean(getConfig().getOrDefault("parEnabled", "false"));
+    }
+
+    public void setParEnabled(Boolean enabled) {
+        getConfig().put("parEnabled", String.valueOf(enabled));
+    }
+
+    public String getParEndpoint() {
+        return getConfig().get("parEndpoint");
+    }
+
+    public void setParEndpoint(String parEndpoint) {
+        getConfig().put("parEndpoint", parEndpoint);
+    }
+
     @Override
     public void validate(RealmModel realm) {
         SslRequired sslRequired = realm.getSslRequired();

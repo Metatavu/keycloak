@@ -26,6 +26,12 @@ export const OIDCAuthentication = ({ create = true }: { create?: boolean }) => {
     name: "config.clientAuthMethod",
   });
 
+  const parEnabled = useWatch({
+    control: control,
+    name: "config.parEnabled",
+    defaultValue: "false",
+  });
+  
   return (
     <>
       <SelectControl
@@ -67,6 +73,18 @@ export const OIDCAuthentication = ({ create = true }: { create?: boolean }) => {
         <SwitchField
           field="config.jwtX509HeadersEnabled"
           label="jwtX509HeadersEnabled"
+        />
+      )}
+
+      <SwitchField 
+        field="config.parEnabled"
+        label="parEnabled"
+      />
+
+      {parEnabled === "true" && (
+        <TextField
+          field="config.parEndpoint"
+          label="parEndpoint"
         />
       )}
     </>

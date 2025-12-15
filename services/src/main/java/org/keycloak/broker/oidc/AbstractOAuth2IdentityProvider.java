@@ -18,6 +18,7 @@ package org.keycloak.broker.oidc;
 
 import java.io.IOException;
 import java.net.URI;
+import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.cert.X509Certificate;
@@ -29,8 +30,12 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
+
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.core.type.TypeReference;
 
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.QueryParam;
@@ -92,6 +97,7 @@ import org.keycloak.protocol.oidc.utils.PkceUtils;
 import org.keycloak.representations.AccessTokenResponse;
 import org.keycloak.representations.JsonWebToken;
 import org.keycloak.representations.idm.ErrorRepresentation;
+import org.keycloak.representations.idm.authorization.AuthorizationRequest;
 import org.keycloak.representations.oidc.TokenMetadataRepresentation;
 import org.keycloak.services.ErrorPage;
 import org.keycloak.services.ErrorResponseException;
@@ -159,6 +165,18 @@ public abstract class AbstractOAuth2IdentityProvider<C extends OAuth2IdentityPro
     public Response performLogin(AuthenticationRequest request) {
         try {
             URI authorizationUrl = createAuthorizationUrl(request).build();
+
+            if (getConfig().isParEnabled()) {
+                String parRequestUri = resolveParRequestUri(request, authorizationUrl);
+
+                URI redirect = UriBuilder.fromUri(authorizationUrl)
+                    .replaceQuery(null)
+                    .queryParam("client_id", getConfig().getClientId())
+                    .queryParam("request_uri", parRequestUri)
+                    .build();
+
+                return Response.seeOther(redirect).build();
+            }
 
             return Response.seeOther(authorizationUrl).build();
         } catch (Exception e) {
@@ -1090,4 +1108,98 @@ public abstract class AbstractOAuth2IdentityProvider<C extends OAuth2IdentityPro
     public boolean supportsLongStateParameter() {
         return !getConfig().isRequiresShortStateParameter();
     }
+
+    /**
+     * Resolve PAR request URI by pushing authorization request to upstream identity provider
+     *
+     * @param request authentication request
+     * @param authorizationUrl authorization URL
+     * @return PAR request URI
+     * @throws IdentityBrokerException if PAR endpoint is not configured or PAR request fails
+     */
+    private String resolveParRequestUri(AuthenticationRequest request, URI authorizationUrl) {
+        String parEndpoint = getConfig().getParEndpoint();
+        if (parEndpoint == null || parEndpoint.isBlank()) {
+            throw new IdentityBrokerException("PAR is enabled, but PAR endpoint is not configured");
+        }
+
+        String rawQuery = authorizationUrl.getRawQuery();
+
+        Map<String, String> authParams = Arrays.stream(rawQuery.split("&"))
+            .map(s ->s.split("="))
+            .filter((kv) -> kv.length == 2)
+            .collect(Collectors.toMap(
+                    kv -> kv[0],
+                    kv -> URLDecoder.decode(kv[1], StandardCharsets.UTF_8)
+            ));
+
+        ParResponse parResponse = pushAuthorizationRequest(request.getSession(), parEndpoint, authParams);
+
+        return parResponse.requestUri;
+    }
+
+    /**
+     * Push Authorization Request (PAR) call to upstream identity provider
+     *
+     * @param session Keycloak session
+     * @param parEndpoint PAR endpoint URL
+     * @param params PAR request parameters
+     * @return PAR response
+     * @throws IdentityBrokerException if PAR request fails
+     */
+    private ParResponse pushAuthorizationRequest(
+        KeycloakSession session,
+        String parEndpoint,
+        Map<String, String> params
+    ) {
+        String clientId = getConfig().getClientId();
+        if (clientId == null) {
+            throw new IdentityBrokerException("Client ID is not configured");
+        }
+
+        String clientSecret = getConfig().getClientSecret();
+        if (clientSecret == null) {
+            throw new IdentityBrokerException("Client secret is not configured");
+        }
+
+        SimpleHttpRequest parRequest = SimpleHttp.create(session)
+                .doPost(parEndpoint)
+                .header("Content-Type", "application/x-www-form-urlencoded");;
+
+        if (getConfig().isBasicAuthentication()) {
+            String header = org.keycloak.util.BasicAuthHelper.RFC6749.createHeader(clientId, clientSecret);
+            parRequest.header(HttpHeaders.AUTHORIZATION, header);
+        } else if (getConfig().isBasicAuthenticationUnencoded()) {
+            parRequest.authBasic(clientId, clientSecret);
+        } else {
+            params.put(OAUTH2_PARAMETER_CLIENT_ID, clientId);
+            params.put(OAUTH2_PARAMETER_CLIENT_SECRET, clientSecret);
+        }
+
+        params.forEach(parRequest::param);
+
+        try (SimpleHttpResponse response = parRequest.asResponse()) {
+            int status = response.getStatus();
+            if (status < 200 || status >= 300) {
+                String body = response.asString();
+                logger.warnf("Upstream PAR request failed: HTTP %d, body=%s", status, body);
+                throw new IdentityBrokerException("Upstream PAR endpoint returned HTTP " + status);
+            }
+
+            return response.asJson(new TypeReference<>() {});
+        } catch (IOException e) {
+            throw new IdentityBrokerException("Failed to parse upstream PAR response", e);
+        } catch (Exception e) {
+            throw new IdentityBrokerException("Upstream PAR call failed", e);
+        }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record ParResponse(
+            @JsonProperty("request_uri")
+            String requestUri,
+
+            @JsonProperty("expires_in")
+            long expiresIn
+    ) {}
 }
