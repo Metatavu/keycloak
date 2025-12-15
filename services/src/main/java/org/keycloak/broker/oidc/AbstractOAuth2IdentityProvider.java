@@ -58,8 +58,10 @@ import org.keycloak.broker.provider.IdentityBrokerException;
 import org.keycloak.broker.provider.UserAuthenticationIdentityProvider;
 import org.keycloak.broker.provider.util.IdentityBrokerState;
 import org.keycloak.common.ClientConnection;
+import org.keycloak.common.util.MultivaluedHashMap;
 import org.keycloak.common.util.SecretGenerator;
 import org.keycloak.common.util.Time;
+import org.keycloak.common.util.UriUtils;
 import org.keycloak.crypto.Algorithm;
 import org.keycloak.crypto.KeyType;
 import org.keycloak.crypto.KeyUse;
@@ -1124,15 +1126,7 @@ public abstract class AbstractOAuth2IdentityProvider<C extends OAuth2IdentityPro
         }
 
         String rawQuery = authorizationUrl.getRawQuery();
-
-        Map<String, String> authParams = Arrays.stream(rawQuery.split("&"))
-            .map(s ->s.split("="))
-            .filter((kv) -> kv.length == 2)
-            .collect(Collectors.toMap(
-                    kv -> kv[0],
-                    kv -> URLDecoder.decode(kv[1], StandardCharsets.UTF_8)
-            ));
-
+        MultivaluedHashMap<String, String> authParams = UriUtils.decodeQueryString(rawQuery);
         ParResponse parResponse = pushAuthorizationRequest(request.getSession(), parEndpoint, authParams);
 
         return parResponse.requestUri;
@@ -1150,7 +1144,7 @@ public abstract class AbstractOAuth2IdentityProvider<C extends OAuth2IdentityPro
     private ParResponse pushAuthorizationRequest(
         KeycloakSession session,
         String parEndpoint,
-        Map<String, String> params
+        MultivaluedHashMap<String, String> params
     ) {
         String clientId = getConfig().getClientId();
         if (clientId == null) {
@@ -1163,8 +1157,8 @@ public abstract class AbstractOAuth2IdentityProvider<C extends OAuth2IdentityPro
         }
 
         SimpleHttpRequest parRequest = SimpleHttp.create(session)
-                .doPost(parEndpoint)
-                .header("Content-Type", "application/x-www-form-urlencoded");;
+            .doPost(parEndpoint)
+            .header("Content-Type", "application/x-www-form-urlencoded");;
 
         if (getConfig().isBasicAuthentication()) {
             String header = org.keycloak.util.BasicAuthHelper.RFC6749.createHeader(clientId, clientSecret);
@@ -1172,11 +1166,15 @@ public abstract class AbstractOAuth2IdentityProvider<C extends OAuth2IdentityPro
         } else if (getConfig().isBasicAuthenticationUnencoded()) {
             parRequest.authBasic(clientId, clientSecret);
         } else {
-            params.put(OAUTH2_PARAMETER_CLIENT_ID, clientId);
-            params.put(OAUTH2_PARAMETER_CLIENT_SECRET, clientSecret);
+            params.put(OAUTH2_PARAMETER_CLIENT_ID, List.of(clientId));
+            params.put(OAUTH2_PARAMETER_CLIENT_SECRET, List.of(clientSecret));
         }
 
-        params.forEach(parRequest::param);
+        params.forEach((key, values) -> {
+            for (String value : values) {
+                parRequest.param(key, value);
+            }
+        });
 
         try (SimpleHttpResponse response = parRequest.asResponse()) {
             int status = response.getStatus();
