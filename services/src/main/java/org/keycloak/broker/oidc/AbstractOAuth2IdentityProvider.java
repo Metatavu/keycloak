@@ -18,7 +18,6 @@ package org.keycloak.broker.oidc;
 
 import java.io.IOException;
 import java.net.URI;
-import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.cert.X509Certificate;
@@ -30,7 +29,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 
@@ -1156,6 +1154,11 @@ public abstract class AbstractOAuth2IdentityProvider<C extends OAuth2IdentityPro
             throw new IdentityBrokerException("Client secret is not configured");
         }
 
+        // Filter out parameters that should not be forwarded in PAR request
+        params.remove("request_uri");
+        params.remove("client_secret");
+        params.remove("request");
+
         SimpleHttpRequest parRequest = SimpleHttp.create(session)
             .doPost(parEndpoint)
             .header("Content-Type", "application/x-www-form-urlencoded");;
@@ -1179,8 +1182,7 @@ public abstract class AbstractOAuth2IdentityProvider<C extends OAuth2IdentityPro
         try (SimpleHttpResponse response = parRequest.asResponse()) {
             int status = response.getStatus();
             if (status < 200 || status >= 300) {
-                String body = response.asString();
-                logger.warnf("Upstream PAR request failed: HTTP %d, body=%s", status, body);
+                logger.warnf("Upstream PAR request failed: HTTP %d", status);
                 throw new IdentityBrokerException("Upstream PAR endpoint returned HTTP " + status);
             }
 
