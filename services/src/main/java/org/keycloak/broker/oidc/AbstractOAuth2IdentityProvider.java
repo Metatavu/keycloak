@@ -1161,7 +1161,7 @@ public abstract class AbstractOAuth2IdentityProvider<C extends OAuth2IdentityPro
 
         SimpleHttpRequest parRequest = SimpleHttp.create(session)
             .doPost(parEndpoint)
-            .header("Content-Type", "application/x-www-form-urlencoded");;
+            .header("Content-Type", "application/x-www-form-urlencoded");
 
         if (getConfig().isBasicAuthentication()) {
             String header = org.keycloak.util.BasicAuthHelper.RFC6749.createHeader(clientId, clientSecret);
@@ -1169,8 +1169,8 @@ public abstract class AbstractOAuth2IdentityProvider<C extends OAuth2IdentityPro
         } else if (getConfig().isBasicAuthenticationUnencoded()) {
             parRequest.authBasic(clientId, clientSecret);
         } else {
-            params.put(OAUTH2_PARAMETER_CLIENT_ID, List.of(clientId));
-            params.put(OAUTH2_PARAMETER_CLIENT_SECRET, List.of(clientSecret));
+            params.putSingle(OAUTH2_PARAMETER_CLIENT_ID, clientId);
+            params.putSingle(OAUTH2_PARAMETER_CLIENT_SECRET, clientSecret);
         }
 
         params.forEach((key, values) -> {
